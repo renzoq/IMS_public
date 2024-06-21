@@ -24,8 +24,6 @@
 #include <vector>
 using namespace std;
 
-void output_dfa_as_pdf(DFA *dfa, std::string basicString, int variables);
-
 int get_random_index(int list_size) {
     random_device rd; // obtain random number from hardware
     mt19937 gen(rd()); // seed the generator
@@ -45,7 +43,6 @@ vector<string> getGoalFromRevisedIntentions(std::vector<std::string> intention_l
             tested_intentions.push_back(intention_list[i]);
         }
     }
-
     return tested_intentions;
 }
 
@@ -63,6 +60,7 @@ int main(int argc, char ** argv) {
     // set to false if environment should choose actions randomly. If set to true, actions can be given as input by a user
     bool interactive_env_mode = false;
 
+    // specify which FOND domain is being used
     std::string formula_name = "slippery_world";
 //    "slippery_world";
 //    "triangle_tireworld";
@@ -120,16 +118,10 @@ int main(int argc, char ** argv) {
     var_mgr->partition_variables(partition.input_variables,partition.output_variables);
     var_mgr_env->partition_variables(partition.input_variables, partition.output_variables);
 
-
-    // TODO: make dynamic to use for different domains. Now only works for the slippery world
+    // change intention list according to the variables of the currently used domain
     std::vector<std::string> intention_list{"F(r4 & c4)"};
-//    std::vector<std::string> intention_list{"F(s5)"};
-//    std::vector<std::string> intention_list{"F(r4 & c4)", "F(r3 & c3)", "F(r1 & c4)", "F(r2 & r1)"};
-//    std::vector<std::string> intention_list{"F(r4 & c4)", "F(r1 & c4)", "F(r4 & c1 & XF(r1 & c1))"};
-//    std::vector<std::string> intention_list{"F(vehicleat_22)",};
 
     reverse(intention_list.begin(), intention_list.end());
-//    std::cout << "nr of intentions in list: " << intention_list.size() << std::endl << endl;
     cout << "initial intentions: " << endl;
     for (auto intent : intention_list) {
         cout << intent << endl;
@@ -147,15 +139,11 @@ int main(int argc, char ** argv) {
 
     ltlf_formula = "(G" + f_agt + ") & ((" + f_init + " & G" + f_env + ") -> ((G(" + f_prec + ")) & (" + goal + ")))";
 
-//    cout << "resulting formula: " << ltlf_formula << endl << endl;
-
     Syft::ExplicitStateDfaMona explicit_dfa_mona = Syft::ExplicitStateDfaMona::dfa_of_formula(ltlf_formula);
     Syft::ExplicitStateDfa explicit_dfa = Syft::ExplicitStateDfa::from_dfa_mona(var_mgr, explicit_dfa_mona);
     Syft::SymbolicStateDfa symbolic_dfa = Syft::SymbolicStateDfa::from_explicit(std::move(explicit_dfa));
 
     auto aut_time = aut_time_stopwatch.stop();
-//    std::cout << "DFA construction time: "
-//              << aut_time.count() << " ms" << std::endl << endl;
 
     Syft::Stopwatch nondef_strategy_time_stopwatch; // stopwatch for strategy_generator construction
     nondef_strategy_time_stopwatch.start();
@@ -166,7 +154,6 @@ int main(int argc, char ** argv) {
 
     Syft::SynthesisResult result_original = synthesizer_original.run();
     realizability = result_original.realizability;
-
 
     // formula for getting moves where environment follows the rules
     std::string ltlf_formula_env = "(" + f_init + " & ((G" + f_agt + ") -> (G" + f_env + ")))";
@@ -195,115 +182,6 @@ int main(int argc, char ** argv) {
     }
 
     bool set_alt_result = false;
-    while (realizability == false) {
-        std::cout << "The agent formula is NOT realizable" << std::endl;
-        auto temp_intention_list = intention_list;
-        string new_ltlf_formula = "";
-
-        int intention_counter = 0;
-        if (temp_intention_list.size() == 1) {
-            new_ltlf_formula =
-                    "(G" + f_agt + ") & ((" + f_init + " & G" + f_env + ") -> ((G(" + f_prec + ")) & (" + temp_intention_list[0] +
-                    ")))";
-
-        } else {
-            auto realizability_curr_set = false;
-            while (!realizability_curr_set && intention_counter < pow(temp_intention_list.size(), 2) - 1) {
-                auto goal_vec_temp = getGoalFromRevisedIntentions(temp_intention_list, intention_counter);
-                string goal_temp = "";
-
-                for (auto intent: goal_vec_temp) {
-                    goal_temp = intent + " & " + goal_temp;
-                }
-                goal_temp.pop_back();
-                goal_temp.pop_back();
-
-                cout << "the following intentions are tested for realizability: " << goal_temp << endl;
-                // below, replace 'goal' with 'f_goal' if we want to have
-                new_ltlf_formula =
-                        "(G" + f_agt + ") & ((" + f_init + " & G" + f_env + ") -> ((G(" + f_prec + ")) & (" +
-                        goal_temp + ")))";
-                //        cout << ltlf_formula << endl;
-                auto var_mgr_temp = std::make_shared<Syft::VarMgr>();
-                var_mgr_temp->create_named_variables(partition.input_variables);
-                var_mgr_temp->create_named_variables(partition.output_variables);
-                var_mgr_temp->partition_variables(partition.input_variables, partition.output_variables);
-
-                auto explicit_dfa_mona_temp = Syft::ExplicitStateDfaMona::dfa_of_formula(new_ltlf_formula);
-                auto explicit_dfa_temp = Syft::ExplicitStateDfa::from_dfa_mona(var_mgr_temp,
-                                                                               explicit_dfa_mona_temp);
-                auto symbolic_dfa_temp = Syft::SymbolicStateDfa::from_explicit(std::move(explicit_dfa_temp));
-
-                Syft::ReachabilityMaxSetSynthesizer synthesizer_new(symbolic_dfa_temp, Syft::Player::Agent,
-                                                                    protagonist_player,
-                                                                    symbolic_dfa_temp.final_states(),
-                                                                    var_mgr_temp->cudd_mgr()->bddOne());
-
-                auto result_new = synthesizer_new.run();
-                realizability_curr_set = result_new.realizability;
-
-                if (!realizability_curr_set) {
-                    cout << "The formula is not realizable with these intentions." << endl;
-                } else {
-                    vector<string> unrealizable_intentions = temp_intention_list;
-                    for (auto intent: goal_vec_temp) {
-                        unrealizable_intentions.erase(
-                                remove(unrealizable_intentions.begin(), unrealizable_intentions.end(), intent),
-                                unrealizable_intentions.end());
-                    }
-                    cout << "Formula is realizable if the following intentions are dropped: " << endl;
-                    for (auto unr_inten: unrealizable_intentions) {
-                        cout << unr_inten << endl;
-                    }
-                }
-                std::cout << std::endl;
-
-                intention_counter++;
-            }
-        }
-
-        cout << "which intention should be dropped from the list?: (index 1 until " << intention_list.size() << ")" << endl;
-        cout << "options: " << endl;
-        for (int i = 0; i < intention_list.size(); i++) {
-            cout << i+1 << " : " << intention_list[i] << endl;
-        }
-        int picked_index_intention;
-        cout << "index chosen: " << endl;
-        cin >> picked_index_intention;
-        intention_list.erase(intention_list.begin() + picked_index_intention-1);
-
-        var_mgr = std::make_shared<Syft::VarMgr>();
-        var_mgr->create_named_variables(partition.input_variables);
-        var_mgr->create_named_variables(partition.output_variables);
-        var_mgr->partition_variables(partition.input_variables,partition.output_variables);
-
-        goal = "";
-        for (int i = 0; i < intention_list.size(); i++) {
-            goal = intention_list[i] + " & " + goal;
-        }
-        goal.pop_back();
-        goal.pop_back();
-
-        ltlf_formula = "(G" + f_agt + ") & ((" + f_init + " & G" + f_env + ") -> ((G(" + f_prec + ")) & (" + goal + ")))";
-
-        cout << "resulting formula: " << ltlf_formula << endl << endl;
-
-        auto explicit_dfa_mona_test = Syft::ExplicitStateDfaMona::dfa_of_formula(ltlf_formula);
-        auto explicit_dfa_test = Syft::ExplicitStateDfa::from_dfa_mona(var_mgr, explicit_dfa_mona_test);
-        auto symbolic_dfa_test = Syft::SymbolicStateDfa::from_explicit(std::move(explicit_dfa_test));
-
-        Syft::ReachabilityMaxSetSynthesizer synthesizer_temp(symbolic_dfa_test, Syft::Player::Agent,
-                                                        protagonist_player, symbolic_dfa_test.final_states(),
-                                                        var_mgr->cudd_mgr()->bddOne());
-
-        auto result_temp = synthesizer_temp.run();
-        realizability = result_temp.realizability;
-
-        if (realizability) {
-            set_alt_result = true;
-        }
-    }
-
     goal = "";
     for (int i = 0; i < intention_list.size(); i++) {
         goal = intention_list[i] + " & " + goal;
@@ -312,8 +190,6 @@ int main(int argc, char ** argv) {
     goal.pop_back();
 
     ltlf_formula = "(G" + f_agt + ") & ((" + f_init + " & G" + f_env + ") -> ((G(" + f_prec + ")) & (" + goal + ")))";
-
-//    cout << "resulting formula: " << ltlf_formula << endl << endl;
 
     var_mgr = std::make_shared<Syft::VarMgr>();
     var_mgr->create_named_variables(partition.input_variables);
@@ -336,8 +212,6 @@ int main(int argc, char ** argv) {
         std::cout << "The agent formula is realizable" << std::endl;
 
         auto nondef_strategy_time = nondef_strategy_time_stopwatch.stop();
-//        std::cout << "Nondeferring strategy generator construction time: "
-//                  << nondef_strategy_time.count() << " ms" << std::endl;
 
         if (maxset) {
             Syft::Stopwatch def_strategy_time_stopwatch; // stopwatch for abstract single strategy
@@ -349,7 +223,6 @@ int main(int argc, char ** argv) {
             int * cube;
             CUDD_VALUE_TYPE value;
 
-            // TODO: check with Yves and Fabio if this should be nondeferring strategy, or that we want this to be also deferring strategy
             auto npm_agent = maxset.nondeferring_strategy;
             auto pm_agent = maxset.deferring_strategy;
 
@@ -365,6 +238,7 @@ int main(int argc, char ** argv) {
             auto current_state_bdd_agent = init_st_agent_bdd;
             auto current_state_bdd_env = init_st_env_bdd;
 
+            auto agent_npm_moves = npm_agent * current_state_bdd_agent;
             // initialize variable for if final state is reached. Keep running the while-loop until 'final state reached'-variable is set to true
             auto final_state_reached = false;
 
@@ -375,11 +249,11 @@ int main(int argc, char ** argv) {
             while (true) {
                 std::cout << "----------------------   NEW LOOP STARTS HERE!  -------------------------" << std::endl << std::endl;
                 // get all non-procrastinating moves for the agent in the current state (in the form of a BDD)
-                auto agent_npm_moves = npm_agent * current_state_bdd_agent;
+                agent_npm_moves = pm_agent * current_state_bdd_agent;
 
                 cout << "get procrastinating (index 1) or non-procrastinating moves (index 2)? [1 or 2]: ";
 
-                int index_strat = 0;
+                int index_strat = 1;
                 cin >> index_strat;
 
                 if (index_strat == 1) {
@@ -516,13 +390,12 @@ int main(int argc, char ** argv) {
                 selected_action_env = selected_action_env.substr(3, selected_action_env.length()-1);
                 std::cout << selected_action_env << std::endl << std::endl;
 
-
                 // we now create two BDD's for the agent and environment, where in each BDD is 1 cube: the picked agent- and environment
                 // action + the current DFA state (different for agent and environment since they use a different DFA)
                 CUDD::BDD current_complete_bdd_agent;
                 CUDD::BDD current_complete_bdd_env;
                 // for all the input- and output variables in a cube:
-                for (int i = 0; i < (var_mgr->output_variable_count() + var_mgr->input_variable_count()); i++) {
+                for (int i = 0; i < (var_mgr_env->output_variable_count() + var_mgr_env->input_variable_count()); i++) {
                     // get truth value of specific bit in the cube, using the index
                     auto var_bit = current_complete_vec[i];
                     // with index, get name of variable. Then, get the BDD of this variable using the name
@@ -607,33 +480,17 @@ int main(int argc, char ** argv) {
                     next_state_vec_env.push_back(state_val);
                 }
 
-                // display the next state for the agent as a binary value (the binary reads from left to right in this case)
-//                std::cout << "next state vec agent: ";
-//                for (auto val: next_state_vec_agent) {
-//                    std::cout << val << " ";
-//                }
-//                std::cout << std::endl;
-
                 // get next state BDD for the agent (full formula, for choosing agent actions)
                 auto next_st_bdd_agent = var_mgr->state_vector_to_bdd(symbolic_dfa.automaton_id(),
                                                                       next_state_vec_agent);
-
-                // display the next state for the environment as a binary value (the binary reads from left to right in this case)
-//                std::cout << "next state vec environment: ";
-//                for (auto val: next_state_vec_env) {
-//                    std::cout << val << " ";
-//                }
-//                std::cout << std::endl << std::endl;
 
                 // get next state BDD for the environment (smaller formula where env follows the rules, for choosing environment actions)
                 auto next_st_bdd_environment = var_mgr_env->state_vector_to_bdd(symbolic_dfa_env.automaton_id(),
                                                                                 next_state_vec_env);
 
-                // set the next state of the agent and environment as the current state. this is used for extracting the winning moves when
-                // the loops starts over
+                // set the next state of the agent and environment as the current state. this is used for extracting the winning moves when the loops starts over
                 current_state_bdd_agent = next_st_bdd_agent;
                 current_state_bdd_env = next_st_bdd_environment;
-
 
                 vector<tuple<string, int>> env_value_vector;
                 map<formula, formula> env_map;
@@ -658,12 +515,6 @@ int main(int argc, char ** argv) {
 
                 auto input_labels = symbolic_dfa.var_mgr()->input_variable_labels();
 
-//                for(map<formula, formula>::const_iterator it = env_map.begin(); it != env_map.end(); ++it) {
-//                    cout << it->first << ", " << it->second << endl;
-//                }
-
-                cout << endl;
-
                 cout << "progressed intentions: " << endl;
                 std::vector<std::string> new_intention_list;
                 for (string intention : intention_list) {
@@ -683,24 +534,6 @@ int main(int argc, char ** argv) {
                 intention_list = new_intention_list;
                 cout << endl;
 
-                // combine the current state of the agent BDD with that of the final states. If it is empty, final state is not reached yet.
-                // otherwise, final state is reached and while-loop stops (keeps going until final state is reached)
-                auto final_st_with_curr_state = current_state_bdd_agent * symbolic_dfa.final_states();
-
-//                DdGen *it_final_state;
-//                // if conjunction of current state and the final states is not empty, we have reached a final state. otherwise, continue
-//                Cudd_ForeachCube(final_st_with_curr_state.manager(), final_st_with_curr_state.getNode(), it_final_state, cube, value) {
-//                    final_state_reached = true;
-//                    std::cout << "final state reached!" << std::endl;
-//                    string halt;
-//                    cout << "stop program? [y/n]: ";
-//                    cin >> halt;
-//                    if (halt == "y"){
-//                        cout << "program stopped" << endl;
-//                        exit(0);
-//                    }
-//                }
-
                 if (intention_list.empty()) {
                     final_state_reached = true;
                     std::cout << "final state reached!" << std::endl;
@@ -712,7 +545,6 @@ int main(int argc, char ** argv) {
                         exit(0);
                     }
                 }
-
 
                 string agent_add_intention = "y";
 
@@ -773,10 +605,7 @@ int main(int argc, char ** argv) {
                                         new_goal.pop_back();
                                         new_goal.pop_back();
 
-                                        std::string new_ltlf_formula =
-                                                "(G" + f_agt + ") & ((" + new_init + " & G" + f_env + ") -> ((G(" +
-                                                f_prec +
-                                                ")) & (" + new_goal + ")))";
+                                        std::string new_ltlf_formula = "(G" + f_agt + ") & ((" + new_init + " & G" + f_env + ") -> ((G(" + f_prec + ")) & (" + new_goal + ")))";
                                         std::cout << "new goal: " << new_goal << std::endl;
 
                                         std::shared_ptr <Syft::VarMgr> var_mgr_new = std::make_shared<Syft::VarMgr>();
@@ -806,8 +635,6 @@ int main(int argc, char ** argv) {
                                             std::cout
                                                     << "adding new intention is realizable! new intention is adopted and DFA is recomputed"
                                                     << std::endl;
-//                                            cout << "new formula for test!:" << new_ltlf_formula << endl;
-
 
                                             var_mgr = std::make_shared<Syft::VarMgr>();
                                             var_mgr->create_named_variables(partition.input_variables);
@@ -830,7 +657,6 @@ int main(int argc, char ** argv) {
 
                                             auto result_check = synthesizer_check.run();
                                             auto maxset_new = synthesizer_check.AbstractMaxSet(std::move(result_check));
-                                            // TODO: change to deferring also? discuss with Yves and Fabio
                                             auto npm_agent_new = maxset_new.nondeferring_strategy;
                                             auto pm_agent_new = maxset_new.deferring_strategy;
 
@@ -866,13 +692,6 @@ int main(int argc, char ** argv) {
                                             // set the initial state as the current state (current_state variables are used later in the loop)
                                             current_state_bdd_agent = next_st_bdd_agent;
                                             std::cout << "new formula agent: " << new_ltlf_formula << std::endl;
-
-
-                                            //------------------------------------
-
-
-
-
                                         } else {
                                             std::cout << "adding new intention is not realizable." << std::endl << endl;
                                             cout
@@ -910,12 +729,10 @@ int main(int argc, char ** argv) {
                                                                 << "the following intentions are tested for realizability: "
                                                                 << goal_temp << endl;
                                                         // below, replace 'goal' with 'f_goal' if we want to have
-                                                        // TODO: change f_init below, this doesn't intialize correctly!
                                                         new_ltlf_formula =
                                                                 "(G" + f_agt + ") & ((" + new_init + " & G" + f_env +
                                                                 ") -> ((G(" + f_prec + ")) & (" +
                                                                 goal_temp + ")))";
-//                                                        cout << "new formula: " << new_ltlf_formula << endl;
                                                         auto var_mgr_temp = std::make_shared<Syft::VarMgr>();
                                                         var_mgr_temp->create_named_variables(partition.input_variables);
                                                         var_mgr_temp->create_named_variables(
@@ -978,7 +795,6 @@ int main(int argc, char ** argv) {
                                 break;
                             }
                             case 2: {
-                                //TODO: add this function
                                 cout << "which intention should be dropped from the list?: (index 1 until "
                                      << intention_list.size() << ")" << endl;
                                 cout << "options: " << endl;
@@ -1036,9 +852,9 @@ int main(int argc, char ** argv) {
                                 var_mgr->partition_variables(partition.input_variables,
                                                              partition.output_variables);
 
-                                explicit_dfa_mona = Syft::ExplicitStateDfaMona::dfa_of_formula(
+                                auto explicit_dfa_mona = Syft::ExplicitStateDfaMona::dfa_of_formula(
                                         new_ltlf_formula);
-                                explicit_dfa = Syft::ExplicitStateDfa::from_dfa_mona(var_mgr,
+                                auto explicit_dfa = Syft::ExplicitStateDfa::from_dfa_mona(var_mgr,
                                                                                      explicit_dfa_mona);
                                 symbolic_dfa = Syft::SymbolicStateDfa::from_explicit(
                                         std::move(explicit_dfa));
@@ -1051,7 +867,6 @@ int main(int argc, char ** argv) {
 
                                 auto result_new = synthesizer_new.run();
                                 auto maxset_new = synthesizer_new.AbstractMaxSet(std::move(result_new));
-                                // TODO: change to deferring also? discuss with Yves and Fabio
                                 auto npm_agent_new = maxset_new.nondeferring_strategy;
                                 auto pm_agent_new = maxset_new.deferring_strategy;
 
@@ -1080,7 +895,7 @@ int main(int argc, char ** argv) {
                                     next_state_vec_agent.push_back(state_val);
                                 }
                                 // get next state BDD for the agent (full formula, for choosing agent actions)
-                                auto next_st_bdd_agent = var_mgr->state_vector_to_bdd(
+                                next_st_bdd_agent = var_mgr->state_vector_to_bdd(
                                         symbolic_dfa.automaton_id(),
                                         next_state_vec_agent);
 
@@ -1111,9 +926,6 @@ int main(int argc, char ** argv) {
             final_states.PrintMinterm();
             cout << endl;
 
-            // end code of Renzo
-
-
             auto def_strategy_time = def_strategy_time_stopwatch.stop();
             std::cout << "Deferring strategy generator construction time: "
                       << def_strategy_time.count() << " ms" << std::endl;
@@ -1129,14 +941,4 @@ int main(int argc, char ** argv) {
 	    << total_time.count() << " ms" << std::endl;
 
   return 0;
-}
-
-void output_dfa_as_pdf(DFA *a, std::string name, int num) {
-    std::vector<unsigned> x(num);
-    std::iota(std::begin(x), std::end(x), 0);
-    std::ofstream out;
-    out.open(name, std::ofstream::out);
-    whitemech::lydia::dfaPrintGraphvizToFile(a, num, x.data(), out);
-    out.close();
-    std::system(std::string("dot -O -Tpdf " + name).c_str());
 }
